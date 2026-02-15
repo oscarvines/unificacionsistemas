@@ -1,0 +1,17 @@
+# Interfaz y Web
+streamlit
+
+# Manipulación de Datos y Excel
+pandas
+openpyxl
+xlsxwriter
+
+# Procesamiento de PDFs (Lectura de texto y tablas)
+pdfplumber
+PyPDF2
+
+# Google Document AI (Para las Nóminas)
+google-cloud-documentai
+
+# Utilidades
+python-dateutil
