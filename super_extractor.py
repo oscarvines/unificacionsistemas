@@ -88,47 +88,114 @@ def ejecutar_super_extractor():
     # 1. PESTAÑA IDC
     with tab_idc:
         if st.session_state.raw_idc:
-            nombres_dis = sorted(list({r['Nombre'] for r in st.session_state.raw_idc if "DESCONOCIDO" not in r['Nombre']}))
+
+            nombres_dis = sorted(list({
+                r['Nombre'] for r in st.session_state.raw_idc
+                if "DESCONOCIDO" not in r['Nombre']
+            }))
+
             if nombres_dis:
-                seleccion = st.multiselect("Filtrar Trabajadores (IDC):", options=nombres_dis, default=nombres_dis)
-                dias_anio = 366 if (anio_audit % 4 == 0) else 365
+
+                seleccion = st.multiselect(
+                    "Filtrar Trabajadores (IDC):",
+                    options=nombres_dis,
+                    default=nombres_dis
+                )
+
+                dias_anio = 366 if (anio_audit % 4 == 0 and (anio_audit % 100 != 0 or anio_audit % 400 == 0)) else 365
                 v_h_d = h_conv / dias_anio
                 f_limite_ini = datetime(anio_audit, 1, 1)
+
                 res_final_idc = []
+
                 for p in seleccion:
-                    idcs_p = sorted([r for r in st.session_state.raw_idc if r['Nombre'] == p], key=lambda x: x['Desde_Info'])
+
+                    idcs_p = sorted(
+                        [r for r in st.session_state.raw_idc if r['Nombre'] == p],
+                        key=lambda x: x['Desde_Info']
+                    )
+
+                    if not idcs_p:
+                        continue
+
                     h_t, h_i, d_it, d_alta = 0.0, 0.0, 0, 0
                     primer_dia, ultimo_dia = None, None
+                    hay_hueco = False
+
                     es_aut = idcs_p[0].get('Es_Autonomo', False)
+                    f_contrato_orig = idcs_p[0]['Inicio_Contrato']
+
                     for d in range(dias_anio):
+
                         dia = f_limite_ini + timedelta(days=d)
-                        vig = next((i for i in reversed(idcs_p) if i['Desde_Info'] <= dia <= i['Hasta_Info']), None)
+
+                        vig = next(
+                            (i for i in reversed(idcs_p)
+                            if i['Desde_Info'] <= dia <= i['Hasta_Info']),
+                            None
+                        )
+
+                        deberia_haber_datos = f_contrato_orig <= dia
+
                         if vig:
+
                             try:
                                 f_a = datetime.strptime(vig['Alta'], "%d-%m-%Y")
-                                f_b = datetime.strptime(vig['Baja'], "%d-%m-%Y") if vig['Baja'] != "ACTIVO" else datetime(2099,1,1)
+                                f_b = datetime.strptime(vig['Baja'], "%d-%m-%Y") if vig['Baja'] != "ACTIVO" else datetime(2099, 1, 1)
+
                                 if f_a <= dia <= f_b:
+
                                     d_alta += 1
-                                    if primer_dia is None: primer_dia = dia
+
+                                    if primer_dia is None:
+                                        primer_dia = dia
                                     ultimo_dia = dia
+
                                     ctp_val = vig.get('CTP', 0)
                                     factor = 1.0 if (es_aut or ctp_val in [0, 1000]) else ctp_val / 1000.0
+
                                     h_t += v_h_d * factor
+
                                     if not es_aut and any(it[0] <= dia <= it[1] for it in vig['Tramos_IT']):
                                         d_it += 1
                                         h_i += v_h_d * factor
-                            except: continue
-                    if d_alta > 0:
-                        dni_ok = normalizar_dni_final(idcs_p[0]['DNI_Trabajador'])
-                        res_final_idc.append({
-                            "Nombre": p, "DNI": dni_ok,
-                            "Horas Efectivas": round(h_t - h_i, 2), "Días IT": int(d_it),
-                            "CIF Empresa": cif_manual if es_aut else idcs_p[0]['NIF_Empresa'],
-                            "Empresa": emp_manual if es_aut else idcs_p[0]['Empresa']
-                        })
-                st.session_state.df_final_idc = pd.DataFrame(res_final_idc)
-                st.dataframe(st.session_state.df_final_idc, use_container_width=True)
 
+                            except:
+                                continue
+
+                        elif deberia_haber_datos:
+                            hay_hueco = True
+
+                    if d_alta > 0:
+
+                        ultimo_ctp = idcs_p[-1].get('CTP', 0)
+                        dedicacion_texto = "100%" if (es_aut or ultimo_ctp in [0, 1000]) else f"{(ultimo_ctp/10):.2f}%"
+
+                        dni_ok = normalizar_dni_final(idcs_p[0]['DNI_Trabajador'])
+
+                        res_final_idc.append({
+                            "Nombre": p,
+                            "DNI": dni_ok,
+                            "CIF Empresa": cif_manual if es_aut else idcs_p[0]['NIF_Empresa'],
+                            "Empresa": emp_manual if es_aut else idcs_p[0]['Empresa'],
+                            "Estado": "⚠️ INCOMPLETO" if hay_hueco else "✅ OK",
+                            "Inicio Contrato": f_contrato_orig.strftime("%d-%m-%Y"),
+                            "Inicio Auditado": primer_dia.strftime("%d-%m-%Y") if primer_dia else "N/A",
+                            "Fin Auditado": ultimo_dia.strftime("%d-%m-%Y") if ultimo_dia else "N/A",
+                            "Días IT": int(d_it),
+                            "Horas Teóricas": round(h_t, 2),
+                            "Horas IT": round(h_i, 2),
+                            "Horas Efectivas": round(h_t - h_i, 2),
+                            "Dedicación": dedicacion_texto
+                        })
+
+                st.session_state.df_final_idc = pd.DataFrame(res_final_idc)
+
+                st.dataframe(
+                    st.session_state.df_final_idc,
+                    use_container_width=True
+                )
+    
     # 2. PESTAÑA 190
     with tab_190:
         if st.session_state.raw_190:
