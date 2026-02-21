@@ -359,10 +359,33 @@ def ejecutar_super_extractor():
                 # Limpieza final de columnas técnicas
                 if 'DNI_JOIN' in resultado.columns: 
                     resultado.drop(columns=['DNI_JOIN'], inplace=True)
+                    
+                # --- 🎯 NUEVO: FILTRO DE COLUMNAS PARA DESCARGA ---
+                st.markdown("---")
+                st.subheader("🛠️ Configuración de Columnas")
+                todas_las_columnas = resultado.columns.tolist()
                 
-                st.subheader("📋 Consolidado de Datos")
-                st.dataframe(resultado, use_container_width=True)
-                st.download_button("📥 Descargar Cuadro de Mando", to_excel(resultado, 'Consolidado'), "Cuadro_Mando.xlsx")
+                columnas_seleccionadas = st.multiselect(
+                    "Selecciona las columnas que deseas incluir en el informe:",
+                    options=todas_las_columnas,
+                    default=todas_las_columnas  # Por defecto todas están marcadas
+                )
+
+                if columnas_seleccionadas:
+                    df_exportar = resultado[columnas_seleccionadas]
+                    
+                    st.subheader("📋 Vista Previa del Informe Personalizado")
+                    st.dataframe(df_exportar, use_container_width=True)
+                    
+                    st.download_button(
+                        label="📥 Descargar Informe Personalizado (Excel)",
+                        data=to_excel(df_exportar, 'Consolidado'),
+                        file_name=f"Auditoria_Personalizada_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                        use_container_width=True
+                    )
+                else:
+                    st.warning("⚠️ Selecciona al menos una columna para generar el informe.")
+
             else:
                 st.warning("No hay datos que coincidan con los filtros seleccionados.")
         else:
