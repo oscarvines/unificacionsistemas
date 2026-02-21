@@ -316,21 +316,49 @@ def ejecutar_super_extractor():
                 resultado = pd.merge(df_1_filtered, df_i_min, on='DNI_JOIN', how='left')
             else:
                 resultado = df_1_filtered
+
             #  --- NUEVA UNIÓN RNT ---
-            if not df_r.empty:
-                # Agrupamos por si hay varios RNTs subidos del mismo DNI
-                df_r_min = df_r.groupby('DNI_JOIN')[['Base_CC_Anual', 'Base_AT_Anual', 'Base_Solidaridad_Anual']].sum().reset_index()
+            if not df_r.empty and 'DNI_JOIN' in df_r.columns:
+                # Borramos restos de columnas RNT si existieran por re-ejecución
+                cols_rnt_limpiar = [c for c in resultado.columns if any(p in c for p in ['Base_CC', 'Base_AT', 'Solidaridad'])]
+                resultado = resultado.drop(columns=cols_rnt_limpiar)
+
+                # Preparamos el RNT sumando SOLO la Base CC
+                df_r_min = df_r.groupby('DNI_JOIN')[['Base_CC_Anual']].sum().reset_index()
                 resultado = pd.merge(resultado, df_r_min, on='DNI_JOIN', how='left')
            
-            # Si hay nóminas, también las unimos (opcional)
-            if not df_r.empty and 'DNI_JOIN' in df_r.columns:
-                # Agrupamos por si hay varios archivos de diferentes meses
-                df_r_min = df_r.groupby('DNI_JOIN')[['Base_CC_Anual', 'Base_AT_Anual', 'Base_Solidaridad_Anual']].sum().reset_index()
-                resultado = pd.merge(resultado, df_r_min, on='DNI_JOIN', how='left')
+            # 3. UNIÓN NÓMINAS
+            if not df_n.empty:
+                # Aseguramos normalización del DNI en nóminas
+                df_n['DNI_JOIN'] = df_n['DNI'].apply(normalizar_dni_final)
+                df_n_min = df_n.groupby('DNI_JOIN')[['AportacionEmpresa']].sum().reset_index()
+                # Limpieza preventiva de columna de nómina si ya existe
+                if 'AportacionEmpresa' in resultado.columns:
+                    resultado = resultado.drop(columns=['AportacionEmpresa'])
+                resultado = pd.merge(resultado, df_n_min, on='DNI_JOIN', how='left')
 
             if not resultado.empty:
-                # Limpieza de columnas técnicas
-                if 'DNI_JOIN' in resultado.columns: resultado.drop(columns=['DNI_JOIN'], inplace=True)
+                # --- 1. CÁLCULO DE LA SS TEÓRICA ---
+                if 'Base_CC_Anual' in resultado.columns and 'Total Cotización (%)' in resultado.columns:
+                    # Fórmula: (Base RNT * Porcentaje IDC) / 100
+                    resultado['SS a cargo Empresa'] = round(
+                        (resultado['Base_CC_Anual'] * resultado['Total Cotización (%)']) / 100, 2
+                    )
+                # --- 2. CÁLCULO DE COSTES POR HORA ---
+                # Verificamos que existan las horas y no sean cero para evitar errores
+                if 'Horas Efectivas' in resultado.columns:
+                    # Creamos primero 'Coste hora' simple (Percepciones / Horas) para tener la referencia
+                    if 'Percepciones' in resultado.columns:
+                        resultado['Coste hora'] = round(resultado['Percepciones'] / resultado['Horas Efectivas'], 2)
+                    
+                    # NUEVA COLUMNA: Coste Hora Real (Dinerarias + SS) / Horas
+                    if 'Dinerarias NO IL' in resultado.columns and 'SS a cargo Empresa' in resultado.columns:
+                        resultado['Coste Hora Real'] = round(
+                            (resultado['Dinerarias NO IL'] + resultado['SS a cargo Empresa']) / resultado['Horas Efectivas'], 2
+                        )
+                # Limpieza final de columnas técnicas
+                if 'DNI_JOIN' in resultado.columns: 
+                    resultado.drop(columns=['DNI_JOIN'], inplace=True)
                 
                 st.subheader("📋 Consolidado de Datos")
                 st.dataframe(resultado, use_container_width=True)
