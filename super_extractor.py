@@ -4,7 +4,15 @@ import io
 import os
 import shutil
 from datetime import datetime, timedelta
-
+def obtener_tipo_desempleo(codigo_contrato):
+    grupo_5_5 = ["100", "109", "130", "139", "150", "189", "200", "209", "230", "250", "289", "300", "389"]
+    grupo_6_7 = ["401", "402", "410", "421", "430", "441", "450", "501", "502", "510", "530", "541"]
+    
+    if str(codigo_contrato) in grupo_5_5:
+        return 5.5
+    elif str(codigo_contrato) in grupo_6_7:
+        return 6.7
+    return 0.0
 # --- IMPORTACIONES DE TUS EXTRACTORES ---
 from extractor_idc import extraer_datos_idc
 from extractor_190 import extraer_datos_190
@@ -45,7 +53,8 @@ def ejecutar_super_extractor():
     with st.sidebar:
         st.header("📂 Carga de Documentos")
         f_idc = st.file_uploader("Subir IDCs", type="pdf", accept_multiple_files=True, key="up_idc")
-        anio_audit = st.selectbox("Año Auditoría IDC:", [2024, 2025, 2023, 2026], index=0)
+        anio_audit = st.selectbox("Año Auditoría IDC:", [2026, 2025, 2024, 2023], index=0)
+        tipo_general = st.number_input("Tipo Cotización General (%):", value=25.07, step=0.01)
         h_conv = st.number_input("Horas Convenio Anual:", value=1800.0)
         emp_manual = st.text_input("Empresa Cliente (Autónomos):", value="")
         cif_manual = st.text_input("CIF Empresa (Autónomos):", value="")
@@ -167,7 +176,14 @@ def ejecutar_super_extractor():
                             hay_hueco = True
 
                     if d_alta > 0:
+                        # 1. Recuperamos el código de contrato y calculamos desempleo
+                        cod_contrato = idcs_p[0].get('Tipo_Contrato', 'N/A')
+                        tipo_des_auto = obtener_tipo_desempleo(cod_contrato)
+                        
+                        # 2. Calculamos el Total (General + Desempleo)
+                        total_cotiz_final = round(tipo_general + tipo_des_auto, 2)
 
+                        # 3. Dedicación
                         ultimo_ctp = idcs_p[-1].get('CTP', 0)
                         dedicacion_texto = "100%" if (es_aut or ultimo_ctp in [0, 1000]) else f"{(ultimo_ctp/10):.2f}%"
 
@@ -179,6 +195,7 @@ def ejecutar_super_extractor():
                             "CIF Empresa": cif_manual if es_aut else idcs_p[0]['NIF_Empresa'],
                             "Empresa": emp_manual if es_aut else idcs_p[0]['Empresa'],
                             "Estado": "⚠️ INCOMPLETO" if hay_hueco else "✅ OK",
+                            "Contrato": cod_contrato, # <--- NUEVA COLUMNA
                             "Inicio Contrato": f_contrato_orig.strftime("%d-%m-%Y"),
                             "Inicio Auditado": primer_dia.strftime("%d-%m-%Y") if primer_dia else "N/A",
                             "Fin Auditado": ultimo_dia.strftime("%d-%m-%Y") if ultimo_dia else "N/A",
@@ -186,7 +203,11 @@ def ejecutar_super_extractor():
                             "Horas Teóricas": round(h_t, 2),
                             "Horas IT": round(h_i, 2),
                             "Horas Efectivas": round(h_t - h_i, 2),
-                            "Dedicación": dedicacion_texto
+                            "Dedicación": dedicacion_texto,
+                            # --- NUEVAS COLUMNAS DE COTIZACIÓN ---
+                            "Cotiz. Gral (%)": tipo_general,
+                            "Cotiz. Desempleo (%)": tipo_des_auto,
+                            "Total Cotización (%)": total_cotiz_final
                         })
 
                 st.session_state.df_final_idc = pd.DataFrame(res_final_idc)
@@ -249,8 +270,17 @@ def ejecutar_super_extractor():
 
             # UNIÓN: El IDC no tiene clave, así que lo pegamos por DNI a cada registro del 190
             if not df_i.empty:
-                # Quitamos columnas de nombre del IDC para no duplicar si ya están en el 190
-                df_i_min = df_i[['DNI_JOIN', 'Horas Efectivas', 'Días IT', 'Empresa', 'CIF Empresa']]
+                # Quitamos columnas de nombre del IDC para no duplicar. 
+                # AÑADIMOS: 'Contrato' y 'Total Cotización (%)' para el análisis final.
+                df_i_min = df_i[[
+                    'DNI_JOIN', 
+                    'Horas Efectivas', 
+                    'Días IT', 
+                    'Empresa', 
+                    'CIF Empresa', 
+                    'Contrato', 
+                    'Total Cotización (%)'
+                ]]
                 resultado = pd.merge(df_1_filtered, df_i_min, on='DNI_JOIN', how='left')
             else:
                 resultado = df_1_filtered

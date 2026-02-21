@@ -35,7 +35,8 @@ def extraer_datos_idc(file_object):
                         "Nombre": nombre, "DNI_Trabajador": dni_trabajador, "NIF_Empresa": "PENDIENTE",
                         "Empresa": "PENDIENTE", "CTP": 0, "Es_Autonomo": True,
                         "Desde_Info": f_desde, "Hasta_Info": f_hasta, "Inicio_Contrato": f_desde,
-                        "Tramos_IT": [], "Alta": f_desde.strftime("%d-%m-%Y"), "Baja": "ACTIVO"
+                        "Tramos_IT": [], "Alta": f_desde.strftime("%d-%m-%Y"), "Baja": "ACTIVO",
+                        "Tipo_Contrato": "AUT"  # <--- AÑADIDO PARA AUTÓNOMOS
                     })
         else:
             # TU LÓGICA ORIGINAL DE PRODUCCIÓN
@@ -58,8 +59,14 @@ def extraer_datos_idc(file_object):
             # 5. Alta (Evita error si no encuentra la palabra ALTA)
             alta_m = re.search(r"ALTA:\s*(\d{2}-\d{2}-\d{4})", texto_completo)
             alta = alta_m.group(1).strip() if alta_m else "01-01-2000"
+
+            # 6. NUEVA LÓGICA: TIPO DE CONTRATO ---
+            # Buscamos el patrón T.CONTRATO: seguido de números
+            contrato_m = re.search(r"T\.CONTRATO:\s*(\d+)", texto_completo)
+            tipo_contrato = contrato_m.group(1) if contrato_m else "N/A"
+            # --------------------------------------
             
-            # Captura de Inicio Contrato según el patrón de Claudia
+            # Captura de Inicio Contrato
             inicio_con_m = re.search(r"INICIO CONTRATO DE TRABAJO.*?FECHA:\s*(\d{2}-\d{2}-\d{4})", texto_completo, re.DOTALL)
             inicio_contrato = inicio_con_m.group(1).strip() if inicio_con_m else alta
 
@@ -87,6 +94,7 @@ def extraer_datos_idc(file_object):
                 "Empresa": razon_social, "CTP": ctp, "Es_Autonomo": False,
                 "Desde_Info": f_desde_info, "Hasta_Info": f_hasta_info,
                 "Inicio_Contrato": datetime.strptime(inicio_contrato, "%d-%m-%Y"),
-                "Tramos_IT": tramos_it, "Alta": alta, "Baja": baja
+                "Tramos_IT": tramos_it, "Alta": alta, "Baja": baja,
+                "Tipo_Contrato": tipo_contrato
             })
     return resultados, texto_completo
