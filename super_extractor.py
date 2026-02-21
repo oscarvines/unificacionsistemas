@@ -16,7 +16,8 @@ def obtener_tipo_desempleo(codigo_contrato):
 # --- IMPORTACIONES DE TUS EXTRACTORES ---
 from extractor_idc import extraer_datos_idc
 from extractor_190 import extraer_datos_190
-from extractor_nominas import procesar_documento, split_pdf 
+from extractor_nominas import procesar_documento, split_pdf
+from rnt_reader import extraer_bases_rnt 
 
 SPLIT_DIR = "split_temp"
 if not os.path.exists(SPLIT_DIR):
@@ -43,12 +44,13 @@ def to_excel(df, sheet_name='Datos'):
 
 def ejecutar_super_extractor():
     # --- INICIALIZACIÓN ---
-    for key in ['raw_idc', 'raw_190', 'raw_nom', 'errores_idc']:
+    for key in ['raw_idc', 'raw_190', 'raw_nom', 'raw_rnt_det', 'raw_rnt_res', 'errores_idc']:
         if key not in st.session_state: st.session_state[key] = []
     
     if 'df_final_idc' not in st.session_state: st.session_state.df_final_idc = pd.DataFrame()
     if 'df_final_190' not in st.session_state: st.session_state.df_final_190 = pd.DataFrame()
     if 'df_final_nom' not in st.session_state: st.session_state.df_final_nom = pd.DataFrame()
+    if 'df_final_rnt' not in st.session_state: st.session_state.df_final_rnt = pd.DataFrame()
 
     with st.sidebar:
         st.header("📂 Carga de Documentos")
@@ -65,9 +67,11 @@ def ejecutar_super_extractor():
         
         st.divider()
         f_nom = st.file_uploader("Subir Nóminas", type="pdf", accept_multiple_files=True, key="up_nom")
+        st.divider()
+        f_rnt = st.file_uploader("Subir RNTs", type="pdf", accept_multiple_files=True, key="up_rnt")
         
         if st.button("🚀 PROCESAR TODO", use_container_width=True):
-            st.session_state.raw_idc, st.session_state.raw_190, st.session_state.raw_nom = [], [], []
+            st.session_state.raw_idc, st.session_state.raw_190, st.session_state.raw_nom, st.session_state.raw_rnt_det, st.session_state.raw_rnt_res = [], [], [], [], []
             if f_idc:
                 for f in f_idc:
                     datos, _ = extraer_datos_idc(f)
@@ -90,9 +94,17 @@ def ejecutar_super_extractor():
                         st.session_state.raw_nom.append(datos)
                 shutil.rmtree(SPLIT_DIR)
                 os.makedirs(SPLIT_DIR, exist_ok=True)
+            if f_rnt:
+                for f in f_rnt:
+                    # Guardamos temporalmente para que el lector RNT pueda abrirlo
+                    with open("temp_rnt.pdf", "wb") as tmp:
+                        tmp.write(f.read())
+                    det, res, errs = extraer_bases_rnt("temp_rnt.pdf")
+                    if det: st.session_state.raw_rnt_det.extend(det)
+                    if res: st.session_state.raw_rnt_res.extend(res)
             st.success("✅ Procesamiento completado.")
 
-    tab_idc, tab_190, tab_nom, tab_maestra = st.tabs(["📊 IDC", "📄 190", "💰 Nóminas", "🎯 Cuadro de Mando"])
+    tab_idc, tab_190, tab_nom, tab_rnt, tab_maestra = st.tabs(["📊 IDC", "📄 190", "💰 Nóminas", "📑 RNT", "🎯 Cuadro de Mando"])
 
     # 1. PESTAÑA IDC
     with tab_idc:
@@ -235,6 +247,25 @@ def ejecutar_super_extractor():
             df_f_190 = df_t[df_t['Nombre'].isin(sel_nom)] if sel_nom else df_t
             st.dataframe(df_f_190, use_container_width=True)
 
+    # 3. PESTAÑA RNT
+    with tab_rnt:
+        # Generamos el DF desde la lista cruda acumulada en el procesamiento
+        if st.session_state.raw_rnt_res:
+            df_rnt_v = pd.DataFrame(st.session_state.raw_rnt_res)
+            # Aseguramos que el DNI esté limpio para mostrar
+            df_rnt_v['DNI'] = df_rnt_v['DNI'].apply(normalizar_dni_final)
+            
+            st.session_state.df_final_rnt = df_rnt_v # Guardamos para la Tab Maestra
+            
+            st.subheader("Bases de Cotización Anuales (RNT)")
+            st.dataframe(df_rnt_v, use_container_width=True)
+            
+            with st.expander("Ver Detalle Mensual"):
+                if st.session_state.raw_rnt_det:
+                    st.dataframe(pd.DataFrame(st.session_state.raw_rnt_det), use_container_width=True)
+        else:
+            st.info("No hay datos de RNT procesados.")
+
     # 4. CUADRO DE MANDO (UNIFICACIÓN MEJORADA CON FILTROS)
     with tab_maestra:
         st.header("🎯 Cuadro de Mando Unificado")
@@ -243,6 +274,7 @@ def ejecutar_super_extractor():
         df_i = st.session_state.df_final_idc.copy()
         df_1 = st.session_state.df_final_190.copy()
         df_n = st.session_state.df_final_nom.copy()
+        df_r = st.session_state.df_final_rnt.copy()
 
         if not df_1.empty:
             # --- FILTROS PARA EL CUADRO DE MANDO ---
@@ -264,9 +296,9 @@ def ejecutar_super_extractor():
             
             # --- LÓGICA DE UNIÓN ---
             # Para el match, normalizamos el DNI en todas
-            for df, col in [(df_i, 'DNI'), (df_1_filtered, 'NIF'), (df_1_filtered, 'DNI'), (df_n, 'DNI')]:
-                if col in df.columns:
-                    df['DNI_JOIN'] = df[col].apply(normalizar_dni_final)
+            for df_temp, col_temp in [(df_i, 'DNI'), (df_1_filtered, 'NIF'), (df_1_filtered, 'DNI'), (df_n, 'DNI'), (df_r, 'DNI')]:
+                if not df_temp.empty and col_temp in df_temp.columns:
+                    df_temp['DNI_JOIN'] = df_temp[col_temp].apply(normalizar_dni_final)
 
             # UNIÓN: El IDC no tiene clave, así que lo pegamos por DNI a cada registro del 190
             if not df_i.empty:
@@ -284,12 +316,17 @@ def ejecutar_super_extractor():
                 resultado = pd.merge(df_1_filtered, df_i_min, on='DNI_JOIN', how='left')
             else:
                 resultado = df_1_filtered
-
+            #  --- NUEVA UNIÓN RNT ---
+            if not df_r.empty:
+                # Agrupamos por si hay varios RNTs subidos del mismo DNI
+                df_r_min = df_r.groupby('DNI_JOIN')[['Base_CC_Anual', 'Base_AT_Anual', 'Base_Solidaridad_Anual']].sum().reset_index()
+                resultado = pd.merge(resultado, df_r_min, on='DNI_JOIN', how='left')
+           
             # Si hay nóminas, también las unimos (opcional)
-            if not df_n.empty:
-                df_n['DNI_JOIN'] = df_n['DNI'].apply(normalizar_dni_final)
-                df_n_min = df_n.groupby('DNI_JOIN')[['AportacionEmpresa']].sum().reset_index()
-                resultado = pd.merge(resultado, df_n_min, on='DNI_JOIN', how='left')
+            if not df_r.empty and 'DNI_JOIN' in df_r.columns:
+                # Agrupamos por si hay varios archivos de diferentes meses
+                df_r_min = df_r.groupby('DNI_JOIN')[['Base_CC_Anual', 'Base_AT_Anual', 'Base_Solidaridad_Anual']].sum().reset_index()
+                resultado = pd.merge(resultado, df_r_min, on='DNI_JOIN', how='left')
 
             if not resultado.empty:
                 # Limpieza de columnas técnicas
